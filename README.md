@@ -1,6 +1,10 @@
 # memory-whole
 
+[![Clojars Project](https://img.shields.io/clojars/v/net.clojars.escherize/memory-whole.svg)](https://clojars.org/net.clojars.escherize/memory-whole)
+
 A Clojure library to leverage actual data to build runtime function annotations.
+
+
 
 ## Usage
 
