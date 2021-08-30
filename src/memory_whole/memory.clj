@@ -5,11 +5,11 @@
    [clojure.string :as str]
    [memory-whole.memory :as mem]))
 
-(def *db-uri (atom {:connection-uri "jdbc:sqlite:.historia.db"}))
+(def *db-uri (atom {:connection-uri "jdbc:sqlite:.memory-whole.db"}))
 
 (defn set-db!
-  "Call with something jdbc can use as a db spec before using defn-historia, or calling `mount/start`.
-  For reference: https://github.com/clojure/java.jdbc#example-usage "
+  "Call with something jdbc can use as a db spec before calling `mount/start`.
+  For reference: https://github.com/clojure/java.jdbc#example-usage"
   [uri]
   (reset! *db-uri uri))
 
@@ -24,6 +24,7 @@
   :stop (do (-> db :connection .close) nil))
 
 (defn init-db []
+  (mount/start)
   (jdbc/execute!
    db
    "create table if not exists calls
@@ -38,7 +39,8 @@
  source TEXT,
  ast_hash BIGINT,
  end_time INTEGER,
- output TEXT)"))
+ output TEXT,
+ exception TEXT)"))
 
 (defn clear-db! [yes]
   (if (= ::yes yes)
@@ -48,34 +50,25 @@
     (println (str "Call this with " ::yes " if you want to clear it."))))
 
 (comment
+
   (clear-db! ::yes)
 
   )
 
 (defn insert-start!
   [db start-info]
-  (mount/start #'memory-whole.memory/db)
+
   (init-db)
-  (println start-info)
   (->
    (jdbc/insert! db :calls start-info)
    first
    ((keyword "last_insert_rowid()"))))
 
 (defn insert-end! [db id end-info]
-  (println "updatting db at id: " id)
   (jdbc/update! db :calls end-info ["id = ?" id]))
 
-#_(defn def-history [name args body]
-  `((let [start-time# (System/currentTimeMillis)
-          _# (insert-start! db ~name
-                            '~args ~args
-                            '~body start-time#)
-          id# (first (vals (first _#)))
-          out# (do ~@body)
-          end-time# (System/currentTimeMillis)]
-      (insert-end! db id# out# end-time#)
-      out#)))
+(defn insert-thrown! [db id end-info]
+    (jdbc/update! db :calls end-info ["id = ?" id]))
 
 ;; Reading back the history:
 (defn format-on-read [row] (let [r (fnil read-string "nil")]

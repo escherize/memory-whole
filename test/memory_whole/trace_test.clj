@@ -3,7 +3,14 @@
             [clojure.test :as t :refer [deftest is]]
             [clojure.edn :as edn]
             [memory-whole.memory :as mem]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [mount.core :as mount]))
+
+
+(defn start! [_] )
+
+(t/use-fixtures :once start!)
+
 
 ;; for testing locally defined functions that
 ;; are not the sole thing being defined on their own line
@@ -27,7 +34,7 @@
 
   (is (= [:x] (:arguments (mem/one "f1"))))
   (is (= "f1" (:name (mem/one "f1"))))
-  (is (str/ends-with? (:file (mem/one "f1")) "memory_whole/trace_test.clj"))
+  (is (str/ends-with? (:file (mem/one "f1") "") "memory_whole/trace_test.clj"))
   (is (= "(deftrace f1\n    ([] 2)\n    ([x] 3)\n    ([x y] 4))" (:source (mem/one "f1"))))
   (is (= 3 (:output (mem/one "f1"))))
   (is (= -1652512550 (:ast_hash (mem/one "f1"))))
@@ -46,7 +53,7 @@
 
   (is (= [:x] (:arguments (mem/one "f2"))))
   (is (= "f2" (:name (mem/one "f2"))))
-  (is (str/ends-with? (:file (mem/one "f2")) "memory_whole/trace_test.clj"))
+  (is (str/ends-with? (:file (mem/one "f2") "") "memory_whole/trace_test.clj"))
   (is (= "(defn f2 ([] 2) ([x] 3) ([x y] 4))" (:source (mem/one "f2"))))
   (is (= 3 (:output (mem/one "f2"))))
   (is (= -1608487388 (:ast_hash (mem/one "f2"))))

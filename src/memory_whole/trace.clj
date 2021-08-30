@@ -46,12 +46,6 @@
                 idx-to-read-to (balanced-to-idx rest-of-file)]
             (apply str (take idx-to-read-to rest-of-file))))))))
 
-;;(find-source 'balanced-to-idx)
-
-
-(defn end [in] (println "end" (pr-str in)))
-(defn threw [in] (println "threw" (pr-str in)))
-
 (defn var->ns-symbol [v]
   (when v
     (apply str (drop 2 (pr-str v)))))
@@ -81,19 +75,24 @@
    {:end_time (System/currentTimeMillis)
     :output output}))
 
+(defn throw-trace! [id exception]
+  (mem/insert-thrown!
+   mem/db
+   id
+   {:end_time (System/currentTimeMillis)
+    :exception (pr-str exception)}))
+
 (defn ^{:skip-wiki true} trace-fn-call
   "Traces a single call to a function f with args. 'name' is the symbol name of the function."
   [name f args]
   (let [id (start-trace! name args)]
     (try
       (let [output (apply f args)]
-        (end-trace! id output
-         )
+        (end-trace! id output)
         output)
       (catch Throwable t
-        (do (threw {:id id
-                    :exception t
-                    :end-time (System/currentTimeMillis)})
+        (do (throw-trace! id t)
+            ;; rethrow
             (throw t))))))
 
 (defmacro deftrace
@@ -322,7 +321,6 @@ such as clojure.core/+"
        (if (and (ifn? @v) (-> v meta :macro not) (-> v meta ::traced not))
          (let [f @v
                vname (symbol (str ns "/" s))]
-           (println "XXXXX")
            (doto v
              (alter-var-root #(fn tracing-wrapper [& args]
                                 (trace-fn-call s % args)))
