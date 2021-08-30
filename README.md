@@ -4,13 +4,19 @@
 
 A Clojure library to leverage actual data to build runtime function annotations.
 
+## How it works
 
+1. `mem/trace` or `mem/deftrace` a function
 
-## Usage
+Traced functions will save their inputs/outputs to a local sqlite db by default, or whatever db you point it at.
 
-1. `mem-whole!` your function (or ns)
-2. call the function multiple times
+2. call the function multiple times in the usual way
+
+TODO: As functions begin putting their values into the memory whole, we can generate specs or malli schema from the raw data.
+
 3. use tools to generate specifications for your function
+
+TODO: Come up with some nice way to use this information during development.
 
 ## TODO
 
