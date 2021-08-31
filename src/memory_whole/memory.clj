@@ -24,7 +24,7 @@
   :stop (do (-> db :connection .close) nil))
 
 (defn init-db []
-  (mount/start)
+  (mount/start #'db)
   (jdbc/execute!
    db
    "create table if not exists calls
@@ -33,6 +33,7 @@
  full_name TEXT,
  start_time INTEGER,
  arguments TEXT,
+ arg_lists TEXT,
  file TEXT,
  line INTEGER,
  column INTEGER,
@@ -45,7 +46,7 @@
 (defn clear-db! [yes]
   (if (= ::yes yes)
     (do
-      (mount/start #'memory-whole.memory/db)
+      (mount/start #'db)
       (jdbc/execute! db "drop table calls"))
     (println (str "Call this with " ::yes " if you want to clear it."))))
 
@@ -57,7 +58,6 @@
 
 (defn insert-start!
   [db start-info]
-
   (init-db)
   (->
    (jdbc/insert! db :calls start-info)
@@ -68,43 +68,54 @@
   (jdbc/update! db :calls end-info ["id = ?" id]))
 
 (defn insert-thrown! [db id end-info]
-    (jdbc/update! db :calls end-info ["id = ?" id]))
+  (jdbc/update! db :calls end-info ["id = ?" id]))
+
+(defn update-maybe [m k f]
+  (if (contains? m k)
+    (update m k f)
+    m))
 
 ;; Reading back the history:
 (defn format-on-read [row] (let [r (fnil read-string "nil")]
                              (-> row
-                                 (update :arguments r)
-                                 (update :output r))))
+                                 (update-maybe :arguments r)
+                                 (update-maybe :arg_lists r)
+                                 (update-maybe :output r))))
 
-(defn one [fn-name] (some->
-                     (jdbc/query db ["select * from calls
-                                      where name = ?
-                                      order by start_time desc
-                                      limit 1" fn-name])
-                     first
-                     format-on-read))
+(defn read-fn-name [fn-name]
+  (cond
+    (symbol? fn-name) (str fn-name)
+    (string? fn-name) fn-name
+    (var? fn-name) (str (:name (meta fn-name)))))
 
-(defn full [full-name] (some->
-                        (jdbc/query db ["select * from calls
-                                         where full_name = ?
-                                         order by start_time desc
-                                         limit 1" full-name])
-                        first
-                        format-on-read))
+(defn one [fn-name]
+  (let [fn-name (read-fn-name fn-name)]
+    (mount/start #'db)
+    (some->
+     (jdbc/query db ["select * from calls
+                    where name = ?
+                    order by start_time desc
+                    limit 1" fn-name])
+     first
+     format-on-read)))
 
-(defn many [fn-name & [limit]] (let [limit (or limit 10)]
-                                 (some->>
-                                  (jdbc/query db ["select * from calls
-                                                   where name = ?
-                                                   order by start_time desc
-                                                   limit ?" fn-name limit])
-                                  (mapv format-on-read))))
+(defn many [fn-name & [limit]]
+  (mount/start #'db)
+  (let [fn-name (read-fn-name fn-name)
+        limit (or limit 10)]
+    (some->>
+     (jdbc/query db ["select * from calls
+                      where name = ?
+                      order by start_time desc
+                      limit ?" fn-name limit])
+     (mapv format-on-read))))
 
-
-(defn many-full [full-name & [limit]] (let [limit (or limit 10)]
-                                        (some->>
-                                         (jdbc/query db ["select * from calls
-                                                          where full_name = ?
-                                                          order by start_time desc
-                                                          limit ?" full-name limit])
-                                         (mapv format-on-read))))
+(defn select
+  "Takes a vector that gets passed to jdbc/query"
+  [q-vector]
+  (mount/start #'db)
+  (let [result (jdbc/query db q-vector)]
+    (cond
+      (nil? result) nil
+      (coll? result) (mapv format-on-read result)
+      :else (format-on-read result))))
