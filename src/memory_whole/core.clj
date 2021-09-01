@@ -2,22 +2,27 @@
   (:require [clojure.pprint :refer [pprint]]
             [clojure.string :as str]
             [clojure.repl :as repl]
-            [memory-whole.memory :as mem]))
+            [memory-whole.memory :as mem]
+            [mount.core :as mount]))
 
 (def one mem/one)
 (def many mem/many)
 (def select mem/select)
+(defn start! [] (mount/start #'mem/db))
+(def db mem/db)
 
 (def ignored-form? '#{def quote var try monitor-enter monitor-exit assert})
 
 (defn balanced-to-idx
   [s]
+  ;; todo ignore \{ \} sort of characters
   (let [openings #{ \{ \( \[ \" } closes #{\" \] \) \}}
         close->open {\] \[ \) \( \} \{ \" \"}]
     (:idx (reduce
-           (fn [{:keys [stack idx] :as acc} char]
+           (fn [{:keys [stack idx] :as _} [char lookahead]]
              (cond
-               (= char \") (if (= \" (peek stack))
+               (and (= char \")
+                    (not= lookahead \\)) (if (= \" (peek stack))
                              {:stack (pop stack) :idx (inc idx)}
                              {:stack (conj stack char) :idx (inc idx)})
                (openings char) {:stack (conj stack char) :idx (inc idx)}
@@ -32,20 +37,24 @@
            s))))
 
 (defn find-source [fn-symbol]
-  (try (if-let [source (repl/source-fn fn-symbol)]
-         source
-         ;; find the dynamic things
-         (when-let [var (resolve fn-symbol)]
-           (let [{:keys [line column file]} (meta var)]
-             (when-let [text (slurp file)]
-               (let [rest-of-file (->> text
-                                       str/split-lines
-                                       (drop (dec line)) ;; seek lines
-                                       (str/join "\n")
-                                       (drop (dec column))) ;; seek col
-                     idx-to-read-to (balanced-to-idx rest-of-file)]
-                 (apply str (take idx-to-read-to rest-of-file)))))))
-       (catch Throwable _ nil)))
+  (try
+    (if-let [o (repl/source-fn fn-symbol)]
+      (do
+        #_(println "repl found " (pr-str o))
+        o)
+      (do
+        #_(println "i found :" fn-symbol)
+        (when-let [var (resolve fn-symbol)]
+          (let [{:keys [line column file]} (meta var)]
+            (when-let [text (slurp file)]
+              (let [rest-of-file (->> text
+                                      str/split-lines
+                                      (drop (dec line)) ;; seek lines
+                                      (str/join "\n")
+                                      (drop (dec column))) ;; seek col
+                    idx-to-read-to (balanced-to-idx rest-of-file)]
+                (apply str (take idx-to-read-to rest-of-file))))))))
+    (catch Exception _ {:sym fn-symbol :var (resolve fn-symbol) :meta (meta (resolve fn-symbol))})))
 
 (defn var->ns-symbol [v]
   (when v
@@ -54,9 +63,16 @@
 (def fmt (java.text.SimpleDateFormat. "yyyyMMdd_HHmmss"))
 (defn start-trace!
   "Returns id"
-  [name args]
-  (let [var (resolve name)
-        source (find-source name)]
+  [name f args]
+  ;;(println "name:" (pr-str name))
+  ;;(println "f:" (pr-str f))
+  ;;(println "type f:" (pr-str (type f)))
+  ;;(println "args:" (pr-str args))
+  (let [nss (symbol (str *ns* "/" name))
+        ;; _ (println "nss:" (pr-str nss))
+        var (resolve nss)
+        ;;_ (println "var:" (pr-str var))
+        source (find-source (symbol var))]
     (mem/insert-start! mem/db
                        {:name (str name)
                         :full_name (var->ns-symbol var)
@@ -79,7 +95,7 @@
 (defn ^{:skip-wiki true} trace-fn-call
   "Traces a single call to a function f with args. 'name' is the symbol name of the function."
   [name f args]
-  (let [id (start-trace! name args)]
+  (let [id (start-trace! name f args)]
     (try
       (let [output (apply f args)]
         (end-trace! id output)

@@ -16,9 +16,9 @@
                  ;; malli
                  [metosin/malli "0.6.1"]
 
-                 [cljfmt "0.8.0"]
-
                  [org.xerial/sqlite-jdbc "3.34.0"]
                  [org.clojure/java.jdbc "0.7.11"]
+
                  ]
+  :source-paths ["src" "test"]
   :repl-options {:init-ns memory-whole.core})

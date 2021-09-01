@@ -47,7 +47,10 @@
   (if (= ::yes yes)
     (do
       (mount/start #'db)
-      (jdbc/execute! db "drop table calls"))
+      (try
+        (jdbc/execute! db "drop table calls")
+        (catch Throwable _ (println "calls table is not there")))
+      (init-db))
     (println (str "Call this with " ::yes " if you want to clear it."))))
 
 (comment
