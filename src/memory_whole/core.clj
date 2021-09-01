@@ -72,7 +72,8 @@
         ;; _ (println "nss:" (pr-str nss))
         var (resolve nss)
         ;;_ (println "var:" (pr-str var))
-        source (find-source (symbol var))]
+        source (try (find-source (symbol var))
+                    (catch Throwable _ nil))] ;; end my suffering
     (mem/insert-start! mem/db
                        {:name (str name)
                         :full_name (var->ns-symbol var)
