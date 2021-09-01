@@ -35,7 +35,7 @@ Let's start with an example of `boo` which just multiplies its arguments, `a` an
 Let's setup memory-whole tracing for `boo` like so:
 
 ``` clojure
-(mem/trace-vars #'boo) ;; 1
+(mem/trace-vars boo) ;; 1
 ;; => #'my.ns/boo
 ```
   
@@ -49,25 +49,22 @@ Let's setup memory-whole tracing for `boo` like so:
 But now we can query for runtime information about `boo`:
   
 ``` clojure
-(mem/one 'boo) ;; 3
-{:id 1 ;; <- recorded call id
- :full_name "my.ns/boo"
- :name "boo"
- :arguments [10 20]
- :output 200
- :start_time 1630362049599
- :end_time 1630362049634
- :exception nil
- :source nil
- 
- 
- ;; these work sometimes (fixme)
- ;; :line 5
- ;; :column 1
- ;; :ast_hash -1663711614
- ;; :arg_lists nil
- ;; :file "*edit-indirect README.md*"
- }
+(mem/one 'boo)
+{:arguments [10 20],
+ :name "boo",
+ :file "*snip*/memory-whole/README.md",
+ :start_time 1630460847233,
+ :source "(defn boo [a b]\n  (* a b))",
+ :output 200,
+ :column 1,
+ :end_time 1630460847243,
+ :line 31,
+ :id 4,
+ :ast_hash 948857165,
+ :exception nil,
+ :full_name "my.ns/boo",
+ ;; fixme
+ :arg_lists nil}
 
 ```
 
@@ -79,39 +76,27 @@ If an exception occurs in `boo`, we can observe that too:
 ;; =exception=>
 
 (mem/one 'boo)
-;; =>
-;; {:full_name "my.ns/boo"
-;;  :name "boo"
-;;  :arguments ["ten" "zero"]
-;;  :start_time 1630362172178
-;;  :end_time 1630362172187
-;;  :id 2
-;;  :ast_hash -1663711614
-;;  :exception "#error {
-;;  :cause \"java.lang.String cannot be cast to java.lang.Number\"
-;;  :via
-;;  [{:type java.lang.ClassCastException
-;;    :message \"java.lang.String cannot be cast to java.lang.Number\"
-;;    :at [clojure.lang.Numbers multiply \"Numbers.java\" 173]}]
-;;  :trace
-;;  [[clojure.lang.Numbers multiply \"Numbers.java\" 173]
-;;   [my.ns$boo invokeStatic \"form-init519651351541265681.clj\" 5]
+{:name "boo",
+ :arguments ["ten" "zero"],
+ :source "(defn boo [a b]\n  (* a b))",
+ :output nil,
+ :exception
+ "#error {
+ :cause \"java.lang.String cannot be cast to java.lang.Number\"
+ :via
+ [{:type java.lang.ClassCastException
+   :message \"java.lang.String cannot be cast to java.lang.Number\"
+   :at [clojure.lang.Numbers multiply \"Numbers.java\" 173]}]
+ :trace
+ [[clojure.lang.Numbers multiply \"Numbers.java\" 173]
+  [my.ns$boo invokeStatic \"form-init1212254902669330318.clj\" 32]
+  [my.ns$boo invoke \"form-init1212254902669330318.clj\" 31]
 
-;;   *********************  snip  *********************
+   ...
 
-;;   [clojure.lang.AFn run \"AFn.java\" 22]
-;;   [java.lang.Thread run \"Thread.java\" 748]]}"
-
-;;  ;; these work sometimes (fixme)
- 
-;;  ;; :line 5
-;;  ;; :column 1
-;;  ;; :file "*edit-indirect README.md*"
-;;  ;; :source nil
-;;  ;; :ast_hash -1663711614
-;;  ;; :arg_lists nil
-;;  }
-
+  ]}"
+ ;; and the other keys
+ }
 ```
 
 Let's try looking up more things. You have access to `mem/one` and `mem/many`, which take the function name (as a string, symbol or var) to let you see the latest. (`mem/many` also takes an optional limit which defaults to 10)
@@ -134,11 +119,6 @@ Let's try looking up more things. You have access to `mem/one` and `mem/many`, w
                     is null order by start_time limit 10"
                    "boo"]))
 ;;=> [[10 20] [90 142] [13 129] [63 162] [25 172] [73 180] [5 186] [73 150] [92 187] [77 146]]
-
-(mapv :arguments
-      (mem/select ["select id, arguments from calls where name = ? and exception
-                    is null order by start_time limit 10"
-                   "boo"]))
 
 ```
 
@@ -206,8 +186,10 @@ There are a few nice things we can do now.
    2. [x] proper collisions between sources
    3. [x] copy over sql-lite functions
    4. [x] write tests
+   5. [ ] figure out why tests cant read source
 2. [x] generate data shapes
-   0. [ ] delineate function generations by ast hash
+   0. [ ] delineate function generations by ast hash in a smart way
+   This is
    How many samples would be good? How accurate should the generation be? 
    1. [ ] malli
    2. [ ] spec
