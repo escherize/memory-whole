@@ -1,32 +1,17 @@
 (ns memory-whole.memory
-  (:require
-   [mount.core :as mount]
-   [clojure.java.jdbc :as jdbc]
-   [clojure.string :as str]
-   [memory-whole.memory :as mem]))
+  (:require [clojure.java.jdbc :as jdbc])
+  (:import (clojure.lang RT)))
 
 (def *db-uri (atom {:connection-uri "jdbc:sqlite:.memory-whole.db"}))
 
-(defn set-db!
-  "Call with something jdbc can use as a db spec before calling `mount/start`.
-  For reference: https://github.com/clojure/java.jdbc#example-usage"
-  [uri]
-  (reset! *db-uri uri))
+;; (defn set-db! [uri] (reset! *db-uri uri))
 
-(defn on-start []
-  (let [spec @*db-uri
-        conn (jdbc/get-connection spec)]
-    (assoc spec :connection conn)))
+(defn db []
+  (assoc @*db-uri :connection (jdbc/get-connection @*db-uri)))
 
-(mount/defstate ^{:on-reload :noop}
-  db
-  :start (on-start)
-  :stop (do (-> db :connection .close) nil))
-
-(defn init-db []
-  (mount/start #'db)
+(defn init-db! []
   (jdbc/execute!
-   db
+   (db)
    "create table if not exists calls
 (id INTEGER PRIMARY KEY,
  name TEXT,
@@ -43,40 +28,26 @@
  output TEXT,
  exception TEXT)"))
 
+(init-db!)
+
 (defn clear-db! [yes]
   (if (= ::yes yes)
     (do
-      (mount/start #'db)
-      (try
-        (jdbc/execute! db "drop table calls")
-        (catch Throwable _ (println "calls table is not there")))
-      (init-db))
+      (jdbc/execute! (db) "delete from calls")
+      (init-db!))
     (println (str "Call this with " ::yes " if you want to clear it."))))
 
-(comment
-
-  (clear-db! ::yes)
-
-  )
-
 (defn insert-start!
-  [db start-info]
-  (init-db)
-  (->
-   (jdbc/insert! db :calls start-info)
-   first
-   ((keyword "last_insert_rowid()"))))
+  [start-info]
+  (-> (jdbc/insert! (db) :calls start-info) first vals first))
 
-(defn insert-end! [db id end-info]
-  (jdbc/update! db :calls end-info ["id = ?" id]))
+(defn insert-end! [id end-info]
+  (jdbc/update! (db) :calls end-info ["id = ?" id]))
 
-(defn insert-thrown! [db id end-info]
-  (jdbc/update! db :calls end-info ["id = ?" id]))
+(defn insert-thrown! [id end-info]
+  (jdbc/update! (db) :calls end-info ["id = ?" id]))
 
-(defn update-maybe [m k f]
-  (if (contains? m k)
-    (update m k f)
-    m))
+(defn update-maybe [m k f] (if (contains? m k) (update m k f) m))
 
 ;; Reading back the history:
 (defn format-on-read [row] (let [r (fnil read-string "nil")]
@@ -93,9 +64,8 @@
 
 (defn one [fn-name]
   (let [fn-name (read-fn-name fn-name)]
-    (mount/start #'db)
     (some->
-     (jdbc/query db ["select * from calls
+     (jdbc/query (db) ["select * from calls
                     where name = ?
                     order by start_time desc
                     limit 1" fn-name])
@@ -103,11 +73,10 @@
      format-on-read)))
 
 (defn many [fn-name & [limit]]
-  (mount/start #'db)
   (let [fn-name (read-fn-name fn-name)
         limit (or limit 10)]
     (some->>
-     (jdbc/query db ["select * from calls
+     (jdbc/query (db) ["select * from calls
                       where name = ?
                       order by start_time desc
                       limit ?" fn-name limit])
@@ -116,8 +85,7 @@
 (defn select
   "Takes a vector that gets passed to jdbc/query"
   [q-vector]
-  (mount/start #'db)
-  (let [result (jdbc/query db q-vector)]
+  (let [result (jdbc/query (db) q-vector)]
     (cond
       (nil? result) nil
       (coll? result) (mapv format-on-read result)

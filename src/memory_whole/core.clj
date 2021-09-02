@@ -3,13 +3,11 @@
             [clojure.string :as str]
             [clojure.repl :as repl]
             [memory-whole.memory :as mem]
-            [mount.core :as mount]))
+            [clojure.edn :as edn]))
 
 (def one mem/one)
 (def many mem/many)
 (def select mem/select)
-(defn start! [] (mount/start #'mem/db))
-(def db mem/db)
 
 (def ignored-form? '#{def quote var try monitor-enter monitor-exit assert})
 
@@ -36,75 +34,86 @@
            {:stack [] :idx 0}
            s))))
 
+(defn trim-source [s]
+  (when s
+    (str/trim (with-out-str (pprint s)))))
+
 (defn find-source [fn-symbol]
   (try
     (if-let [o (repl/source-fn fn-symbol)]
-      (do
-        #_(println "repl found " (pr-str o))
-        o)
-      (do
-        #_(println "i found :" fn-symbol)
-        (when-let [var (resolve fn-symbol)]
-          (let [{:keys [line column file]} (meta var)]
-            (when-let [text (slurp file)]
-              (let [rest-of-file (->> text
-                                      str/split-lines
-                                      (drop (dec line)) ;; seek lines
-                                      (str/join "\n")
-                                      (drop (dec column))) ;; seek col
-                    idx-to-read-to (balanced-to-idx rest-of-file)]
-                (apply str (take idx-to-read-to rest-of-file))))))))
-    (catch Exception _ {:sym fn-symbol :var (resolve fn-symbol) :meta (meta (resolve fn-symbol))})))
+      (trim-source (read-string o))
+      (when-let [var (resolve fn-symbol)]
+        (let [{:keys [line column file]} (meta var)]
+          (when-let [text (slurp file)]
+            (let [rest-of-file (->> text
+                                    str/split-lines
+                                    (drop (dec line)) ;; seek lines
+                                    (str/join "\n")
+                                    (drop (dec column)))] ;; seek col
+              (trim-source
+               (or
+                (when-let [form
+                           (try (read-string (apply str rest-of-file))
+                                (catch Throwable _ nil))]
+                  form)
+
+                (let [idx-to-read-to (balanced-to-idx rest-of-file)]
+                  (read-string (apply str (take idx-to-read-to rest-of-file)))))))))))
+    (catch Exception e
+      (prn {:sym fn-symbol :var (resolve fn-symbol) :meta (meta (resolve fn-symbol))})
+      (throw e))))
 
 (defn var->ns-symbol [v]
   (when v
     (apply str (drop 2 (pr-str v)))))
 
 (def fmt (java.text.SimpleDateFormat. "yyyyMMdd_HHmmss"))
+
 (defn start-trace!
   "Returns id"
-  [name f args]
-  ;;(println "name:" (pr-str name))
-  ;;(println "f:" (pr-str f))
-  ;;(println "type f:" (pr-str (type f)))
-  ;;(println "args:" (pr-str args))
-  (let [nss (symbol (str *ns* "/" name))
-        ;; _ (println "nss:" (pr-str nss))
-        var (resolve nss)
-        ;;_ (println "var:" (pr-str var))
-        source (try (find-source (symbol var))
-                    (catch Throwable _ nil))] ;; end my suffering
-    (mem/insert-start! mem/db
-                       {:name (str name)
-                        :full_name (var->ns-symbol var)
-                        :start_time (System/currentTimeMillis)
-                        :arguments (vec args)
-                        :arg_lists (:arg_lists (meta var))
-                        :file (:file (meta var))
-                        :line (:line (meta var))
-                        :column (:column (meta var))
-                        :source source
-                        :ast_hash (hash [source (:arg_lists (meta var))])})))
+  [name _f args]
+  (let [var (resolve name)
+        var-meta (meta var)
+        source (find-source name)] ;; end my suffering
+
+    (println (pr-str name) ":" (type name))
+    (prn var)
+    (println "!!!!! source" source)
+
+    (mem/insert-start!
+     {:name (str name)
+      :full_name (var->ns-symbol var)
+      :start_time (System/currentTimeMillis)
+      :arguments (vec args)
+      :arg_lists (:arg_lists var-meta)
+      :file (:file var-meta)
+      :line (:line var-meta)
+      :column (:column var-meta)
+      :source source
+      :ast_hash (hash [source (:arg_lists var-meta)])})))
 
 (defn end-trace!
   [id output]
-  (mem/insert-end! mem/db id {:end_time (System/currentTimeMillis) :output output}))
+  (mem/insert-end! id
+                   {:end_time (System/currentTimeMillis)
+                    :output output}))
 
 (defn throw-trace! [id exception]
-  (mem/insert-thrown! mem/db id {:end_time (System/currentTimeMillis) :exception (pr-str exception)}))
+  (mem/insert-thrown! id
+                      {:end_time (System/currentTimeMillis)
+                       :exception (pr-str exception)}))
 
-(defn ^{:skip-wiki true} trace-fn-call
+(defn trace-fn-call
   "Traces a single call to a function f with args. 'name' is the symbol name of the function."
   [name f args]
   (let [id (start-trace! name f args)]
-    (try
-      (let [output (apply f args)]
-        (end-trace! id output)
-        output)
-      (catch Throwable t
-        (do (throw-trace! id t)
+    (try (let [output (apply f args)]
+           (end-trace! id output)
+           output)
+      (catch Throwable thrown
+        (do (throw-trace! id thrown)
             ;; rethrow
-            (throw t))))))
+            (throw thrown))))))
 
 (defmacro deftrace
   "Use in place of defn; traces each call/return of this fn, including
@@ -289,7 +298,7 @@ such as clojure.core/+"
   ThrowableRecompose
   (ctor-select [this _ _] this)) ;; Obviously something is wrong but the trace should not alter processing
 
-(defn ^{:skip-wiki true} trace-compose-throwable
+(defn  trace-compose-throwable
   "Re-create a new throwable with a composed message from the given throwable
    and the message to be added. The exception stack trace is kept at a minimum."
   [^Throwable throwable ^String message]
@@ -299,7 +308,7 @@ such as clojure.core/+"
         new-throwable (clone-throwable throwable new-stack-trace [composed-msg])]
     new-throwable))
 
-(defn ^{:skip-wiki true} trace-form
+(defn  trace-form
   "Trace the given form avoiding try catch when recur is present in the form."
   [form]
   (if (recurs? form)
@@ -315,7 +324,7 @@ such as clojure.core/+"
   `(do
      ~@(map trace-form body)))
 
-(defn ^{:skip-wiki true} trace-var*
+(defn  trace-var*
   "If the specified Var holds an IFn and is not marked as a macro, its
   contents is replaced with a version wrapped in a tracing call;
   otherwise nothing happens. Can be undone with untrace-var.
@@ -337,7 +346,7 @@ such as clojure.core/+"
                                 (trace-fn-call s % args)))
              (alter-meta! assoc ::traced f)))))))
 
-(defn ^{:skip-wiki true} untrace-var*
+(defn  untrace-var*
   "Reverses the effect of trace-var / trace-vars / trace-ns for the
   given Var, replacing the traced function with the original, untraced
   version. No-op for non-traced Vars.
@@ -375,7 +384,7 @@ such as clojure.core/+"
               (untrace-var* ~x)
               (untrace-var* (quote ~x))))))
 
-(defn ^{:skip-wiki true} trace-ns*
+(defn  trace-ns*
   "Replaces each function from the given namespace with a version wrapped
   in a tracing call. Can be undone with untrace-ns. ns should be a namespace
   object or a symbol.
@@ -405,7 +414,7 @@ such as clojure.core/+"
         n (if quote? (list 'quote n) n)]
     `(trace-ns* ~n)))
 
-(defn ^{:skip-wiki true} untrace-ns*
+(defn  untrace-ns*
   "Reverses the effect of trace-var / trace-vars / trace-ns for the
   Vars in the given namespace, replacing each traced function from the
   given namespace with the original, untraced version."
@@ -434,4 +443,3 @@ such as clojure.core/+"
   [v]
   (let [^clojure.lang.Var v (if (var? v) v (resolve v))]
     (and (ifn? @v) (-> v meta :macro not))))
-

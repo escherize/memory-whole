@@ -5,7 +5,10 @@
             [memory-whole.memory :as memory]
             [clojure.string :as str]
             [mount.core :as mount]
-            [clojure.repl :as repl]))
+            [clojure.repl :as repl])
+  (:import [clojure.lang RT]))
+
+(println (str/replace (pr-str (re-seq #"[^:]+" (System/getProperty "java.class.path"))) #"bryanmaass" "me" ))
 
 (defn start-fixture [test-fn]
   (memory/clear-db! ::memory/yes)
@@ -13,29 +16,42 @@
 
 (t/use-fixtures :once start-fixture)
 
-;; for testing locally defined functions that
-;; are not the sole thing being defined on their own line
-(defn send-squid [] 1)
 (defn feed-owl [food] [:eating food])
 
-(deftest can-find-sources
-  (is (= "(defn feed-owl [food] [:eating food])" (mem/find-source (symbol #'feed-owl))))
-  (is (= "(defn send-squid [] 1)" (mem/find-source (symbol #'send-squid)))))
+#_(deftest can-find-sources
+
+  (is (= {} (meta #'feed-owl)))
+
+  #_(is (= "(defn feed-owl [food] [:eating food])" (mem/find-source 'feed-owl))))
+
+(println "(re-seq #\"[^:]+\" (System/getProperty \"java.class.path\"))" (re-seq #"[^:]+" (System/getProperty "java.class.path")))
+;; try:
+(println "(resolve 'feed-owl) => " (resolve 'feed-owl))
+;; try:
+(println "(:file (meta (resolve 'feed-owl))) => " (:file (meta (resolve 'feed-owl))))
+;; finally try:
+(println "(.getResourceAsStream (RT/baseLoader) (:file (meta (resolve 'feed-owl)))) => " (.getResourceAsStream (RT/baseLoader) (:file (meta (resolve 'feed-owl)))))
+;; Where x is the symbol you pass to source-fn
+(println "(repl/source-fn 'feed-owl) => " (repl/source-fn 'feed-owl))
+
+(println "(mem/find-source 'feed-owl) => " (mem/find-source 'feed-owl))
 
 (deftest deftrace-works
-  (defn send-squid [] 1)
-  (defn feed-owl [food] [:eating food])
   (mem/trace-vars #'feed-owl)
   (is (= [:eating :x] (feed-owl :x)))
-  (is (= [:eating :x] (:output (memory/one "feed-owl"))))
+  (let [result (memory/one "feed-owl")]
+    (is (= [:eating :x] (:output result)))
+    (is (= [:x] (:arguments result)))
+    (is (= {} result))
+    )
 
-    ;; fixme
-  #_#_#_#_#_#_#_(is (= [:x] (:arguments (memory/one "feed-owl"))))
+  ;; fixme
+  #_#_#_#_#_#_
   (is (= "feed-owl" (:name (memory/one "feed-owl"))))
   (is (str/ends-with? (:file (memory/one "feed-owl") "") "memory_whole/core_test.clj"))
   (is (=
-         "(deftrace feed-owl\n  ([] 2)\n  ([x] 3)\n  ([x y] 4))"
-         (:source (memory/one "feed-owl"))))
+       "(deftrace feed-owl\n  ([] 2)\n  ([x] 3)\n  ([x y] 4))"
+       (:source (memory/one "feed-owl"))))
   (is (= 3 (:output (memory/one "feed-owl"))))
   (is (= -770262672 (:ast_hash (memory/one "feed-owl"))))
   (is (= "memory-whole.core-test/feed-owl" (:full_name (memory/one "feed-owl")))))
