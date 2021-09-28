@@ -1,5 +1,6 @@
 (ns memory-whole.memory
-  (:require [clojure.java.jdbc :as jdbc])
+  (:require [clojure.java.jdbc :as jdbc]
+            [clojure.string :as str])
   (:import (clojure.lang RT)))
 
 (def *db-uri (atom {:connection-uri "jdbc:sqlite:.memory-whole.db"}))
@@ -39,6 +40,7 @@
 
 (defn insert-start!
   [start-info]
+  (init-db!)
   (-> (jdbc/insert! (db) :calls start-info) first vals first))
 
 (defn insert-end! [id end-info]
@@ -47,13 +49,19 @@
 (defn insert-thrown! [id end-info]
   (jdbc/update! (db) :calls end-info ["id = ?" id]))
 
-(defn update-maybe [m k f] (if (contains? m k) (update m k f) m))
+(defn ^:private update-maybe [m k f] (if (contains? m k) (update m k f) m))
+
+(defn ^:private kebab-case-keys [m]
+  (zipmap
+   (mapv (fn [k] (keyword (str/replace (name k) #"_" "-"))) (keys m))
+   (vals m)))
 
 ;; Reading back the history:
 (defn format-on-read [row] (let [r (fnil read-string "nil")]
                              (-> row
+                                 kebab-case-keys
                                  (update-maybe :arguments r)
-                                 (update-maybe :arg_lists r)
+                                 (update-maybe :arg-lists r)
                                  (update-maybe :output r))))
 
 (defn read-fn-name [fn-name]

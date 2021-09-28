@@ -1,14 +1,12 @@
 (ns memory-whole.core-test
   (:require [memory-whole.core :as mem]
             [clojure.test :as t :refer [deftest is]]
-            [clojure.edn :as edn]
             [memory-whole.memory :as memory]
             [clojure.string :as str]
-            [mount.core :as mount]
             [clojure.repl :as repl])
   (:import [clojure.lang RT]))
 
-(println (str/replace (pr-str (re-seq #"[^:]+" (System/getProperty "java.class.path"))) #"bryanmaass" "me" ))
+;;(println (str/replace (pr-str (re-seq #"[^:]+" (System/getProperty "java.class.path"))) #"bryanmaass" "me" ))
 
 (defn start-fixture [test-fn]
   (memory/clear-db! ::memory/yes)
@@ -16,78 +14,67 @@
 
 (t/use-fixtures :once start-fixture)
 
-(defn feed-owl [food] [:eating food])
-
-#_(deftest can-find-sources
-
-  (is (= {} (meta #'feed-owl)))
-
-  #_(is (= "(defn feed-owl [food] [:eating food])" (mem/find-source 'feed-owl))))
-
-(println "(re-seq #\"[^:]+\" (System/getProperty \"java.class.path\"))" (re-seq #"[^:]+" (System/getProperty "java.class.path")))
-;; try:
-(println "(resolve 'feed-owl) => " (resolve 'feed-owl))
-;; try:
-(println "(:file (meta (resolve 'feed-owl))) => " (:file (meta (resolve 'feed-owl))))
-;; finally try:
-(println "(.getResourceAsStream (RT/baseLoader) (:file (meta (resolve 'feed-owl)))) => " (.getResourceAsStream (RT/baseLoader) (:file (meta (resolve 'feed-owl)))))
-;; Where x is the symbol you pass to source-fn
-(println "(repl/source-fn 'feed-owl) => " (repl/source-fn 'feed-owl))
-
-(println "(mem/find-source 'feed-owl) => " (mem/find-source 'feed-owl))
+(def notable [:arguments :name :full-name :output :exception])
 
 (deftest deftrace-works
-  (mem/trace-vars #'feed-owl)
-  (is (= [:eating :x] (feed-owl :x)))
-  (let [result (memory/one "feed-owl")]
-    (is (= [:eating :x] (:output result)))
-    (is (= [:x] (:arguments result)))
-    (is (= {} result))
-    )
+  (mem/deftrace feed-owl [food] [:eating food])
 
-  ;; fixme
-  #_#_#_#_#_#_
-  (is (= "feed-owl" (:name (memory/one "feed-owl"))))
-  (is (str/ends-with? (:file (memory/one "feed-owl") "") "memory_whole/core_test.clj"))
-  (is (=
-       "(deftrace feed-owl\n  ([] 2)\n  ([x] 3)\n  ([x y] 4))"
-       (:source (memory/one "feed-owl"))))
-  (is (= 3 (:output (memory/one "feed-owl"))))
-  (is (= -770262672 (:ast_hash (memory/one "feed-owl"))))
-  (is (= "memory-whole.core-test/feed-owl" (:full_name (memory/one "feed-owl")))))
+  (is (= [:eating :mouse] (feed-owl :mouse)))
 
-#_
+  (let [one-result (memory/one "feed-owl")]
+    (is (= [:eating :mouse] (:output one-result)))
+    (is (= [:mouse] (:arguments one-result)))
+    (is (=
+         {:arguments [:mouse]
+          :name "feed-owl"
+          :output [:eating :mouse]
+          :full-name "memory-whole.core-test/feed-owl"
+          :exception nil}
+         (select-keys one-result notable)))
+    (is (= "(mem/deftrace feed-owl [food] [:eating food])"
+           (:source one-result)))))
+
 (deftest tracing-works
-  (defn f2 ([] 2) ([x] 3) ([x y] 4))
+  (defn f2
+    ([] 2)
+    ([x] 3)
+    ([x y] 4))
 
-  (untrace-vars #'f2)
-
-  (trace-vars #'f2)
+  (mem/trace-vars #'f2)
 
   (is (= 3 (f2 :x)))
 
-  (is (= 3 (:output (memory/one "f2"))) "can recover output")
+  (let [one-result (memory/one "f2")]
+    (is (= 3 (:output one-result)) "can recover output")
+    (is (= [:x] (:arguments one-result)))
+    (is (= "f2" (:name one-result)))
+    (is (str/ends-with? (:file one-result "") "memory_whole/core_test.clj"))
+    ;; wtf?
+    (is (= "(defn f2 ([] 2) ([x] 3) ([x y] 4))" (:source one-result)))
+    (is (= 3 (:output one-result)))
+    (is (= "memory-whole.core-test/f2" (:full-name one-result)))))
 
-  (is (= [:x] (:arguments (memory/one "f2"))))
-  (is (= "f2" (:name (memory/one "f2"))))
-  (is (str/ends-with? (:file (memory/one "f2") "") "memory_whole/core_test.clj"))
-  (is (= "(defn f2 ([] 2) ([x] 3) ([x y] 4))" (:source (memory/one "f2"))))
-  (is (= 3 (:output (memory/one "f2"))))
-  (is (= -1608487388 (:ast_hash (memory/one "f2"))))
-  (is (= "memory-whole.core-test/f2" (:full_name (memory/one "f2")))))
-#_
-(deftest tracing-works-with-keys
-  (defn f3 [{:keys [a b c] :as x}]
-    (* a b c (reduce + (vals x))))
+(comment
+  (println "(re-seq #\"[^:]+\" (System/getProperty \"java.class.path\"))" (re-seq #"[^:]+" (System/getProperty "java.class.path")))
+  ;; try:
+  (println "(resolve 'feed-owl) => " (resolve 'feed-owl))
+  ;; try:
+  (println "(:file (meta (resolve 'feed-owl))) => " (:file (meta (resolve 'feed-owl))))
+  ;; finally try:
+  (println "(.getResourceAsStream (RT/baseLoader) (:file (meta (resolve 'feed-owl)))) => " (.getResourceAsStream (RT/baseLoader) (:file (meta (resolve 'feed-owl)))))
+  ;; Where x is the symbol you pass to source-fn
+  (println "(repl/source-fn 'feed-owl) => " (repl/source-fn 'feed-owl))
 
-  (untrace-vars #'f3)
+  (println "(mem/find-source 'feed-owl) => " (mem/find-source 'feed-owl))
 
-  (trace-vars #'f3)
+  (println "----- - - --- --- - - - -- -")
 
-  (is (= 393/10 (f3 {:a 3 :b 10 :c 1/10})))
+  (println (pr-str (mem/deftrace boo [x] 2)))
+  (println (pr-str (boo 13)))
 
-  (is (= 393/10 (:output (memory/one "f3"))) "can recover output")
+  ;; observe
+  (println (pr-str (:fn-body (meta #'boo))))
 
-  (is (= [{:a 3, :b 10, :c 1/10}] (:arguments (memory/one "f3"))))
-
-  (is (= "(defn f3 [{:keys [a b c] :as x}]\n    (* a b c (reduce + (vals x))))" (:source (memory/one "f3")))))
+  ;; then
+  (println (pr-str (one "boo")))
+  (println (pr-str (mapv (juxt :arguments :output) (many "boo")))))

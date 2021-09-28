@@ -3,7 +3,7 @@
             [clojure.string :as str]
             [clojure.repl :as repl]
             [memory-whole.memory :as mem]
-            [clojure.edn :as edn]))
+            [clojure.java.io :as io]))
 
 (def one mem/one)
 (def many mem/many)
@@ -38,29 +38,48 @@
   (when s
     (str/trim (with-out-str (pprint s)))))
 
+(defn read-source-by-hand [text line column]
+  (let [rest-of-file (->> text
+                          str/split-lines
+                          (drop (dec line)) ;; seek lines
+                          (str/join "\n")
+                          (drop (dec column)))]
+    (trim-source
+     (or
+      (when-let [form
+                 (try (read-string (apply str rest-of-file))
+                      (catch Throwable _ nil))]
+        form)
+
+      (let [idx-to-read-to (balanced-to-idx rest-of-file)]
+        (read-string (apply str (take idx-to-read-to rest-of-file))))))))
+
 (defn find-source [fn-symbol]
   (try
     (if-let [o (repl/source-fn fn-symbol)]
       (trim-source (read-string o))
       (when-let [var (resolve fn-symbol)]
-        (let [{:keys [line column file]} (meta var)]
-          (when-let [text (slurp file)]
-            (let [rest-of-file (->> text
-                                    str/split-lines
-                                    (drop (dec line)) ;; seek lines
-                                    (str/join "\n")
-                                    (drop (dec column)))] ;; seek col
-              (trim-source
-               (or
-                (when-let [form
-                           (try (read-string (apply str rest-of-file))
-                                (catch Throwable _ nil))]
-                  form)
+        (let [{:keys [line column file fn-body]} (meta var)]
+          (cond
+            fn-body
+            (trim-source fn-body)
 
-                (let [idx-to-read-to (balanced-to-idx rest-of-file)]
-                  (read-string (apply str (take idx-to-read-to rest-of-file)))))))))))
+            ;; careful this freaking thing acts weird depending on who calls it
+            (slurp file)
+            (read-source-by-hand (slurp file) line column)
+
+            ;; careful this freaking thing acts weird depending on who calls it
+            (io/resource file)
+            (read-source-by-hand (io/resource file) line column)
+
+            :else
+            nil))))
     (catch Exception e
-      (prn {:sym fn-symbol :var (resolve fn-symbol) :meta (meta (resolve fn-symbol))})
+      (pprint {::notice "Please report issues with source code lookups."
+               ::sym fn-symbol
+               ::var (resolve fn-symbol)
+               ::exception (str (ex-message e) " : " (ex-cause e))
+               ::meta (meta (resolve fn-symbol))})
       (throw e))))
 
 (defn var->ns-symbol [v]
@@ -73,24 +92,39 @@
   "Returns id"
   [name _f args]
   (let [var (resolve name)
-        var-meta (meta var)
-        source (find-source name)] ;; end my suffering
+        {:keys [fn-body fn-name fn-form] :as var-meta} (meta var)
+        source (try (find-source name)
+                    (catch Throwable _ nil))]
 
-    (println (pr-str name) ":" (type name))
-    (prn var)
-    (println "!!!!! source" source)
+    ;; (println "start-trace!")
+    ;; (println "name" (pr-str name))
+    ;; (println "var"  (pr-str var))
+    ;; (println "\nvar-meta")
+    ;; (pprint var-meta)
+    ;; (println "\ninsert-start!")
+
+    ;; (pprint {:name (str name)
+    ;;          :full_name (var->ns-symbol var)
+    ;;          :start_time (System/currentTimeMillis)
+    ;;          :arguments (vec args)
+    ;;          :arg_lists (:arg_lists var-meta)
+    ;;          :file (:file var-meta)
+    ;;          :line (:line var-meta)
+    ;;          :column (:column var-meta)
+    ;;          :source source
+    ;;          :ast_hash (hash [fn-name fn-form])})
 
     (mem/insert-start!
      {:name (str name)
       :full_name (var->ns-symbol var)
       :start_time (System/currentTimeMillis)
       :arguments (vec args)
-      :arg_lists (:arg_lists var-meta)
+      :arg_lists (:arg-lists var-meta)
       :file (:file var-meta)
       :line (:line var-meta)
       :column (:column var-meta)
       :source source
-      :ast_hash (hash [source (:arg_lists var-meta)])})))
+      :ast_hash (hash [fn-name fn-form])})))
 
 (defn end-trace!
   [id output]
@@ -114,7 +148,6 @@
         (do (throw-trace! id thrown)
             ;; rethrow
             (throw thrown))))))
-
 (defmacro deftrace
   "Use in place of defn; traces each call/return of this fn, including
    arguments. Nested calls to deftrace'd functions will print a
@@ -122,12 +155,26 @@
    The first argument of the form definition can be a doc string"
   [name & definition]
   (let [doc-string (if (string? (first definition)) (first definition) "")
-        fn-form  (if (string? (first definition)) (rest definition) definition)]
+        fn-form (if (string? (first definition)) (rest definition) definition)]
+;;    (println fn-form)
     `(do
        (declare ~name)
-       (let [f# (fn ~@fn-form)]
-         (defn ~name ~doc-string [& args#]
-           (trace-fn-call '~name f# args#))))))
+       (let [f# (fn ~@fn-form)
+             v# (defn ~name ~doc-string [& args#]
+                  (trace-fn-call '~name f# args#))]
+         ;; (alter-meta! v# assoc ::fn-body (trim-source (list*
+         ;;                                              (symbol "defn")
+         ;;                                              '~name
+         ;;                                              '~fn-form)))
+         ;; (alter-meta! v# assoc ::fn-name (trim-source '~name))
+         (alter-meta! v# assoc ::fn-form (trim-source '~fn-form))
+         v#))))
+
+(comment
+  (deftrace f [x] x)
+  (f 1)
+  (deftrace g ([] 2) ([x] x))
+  (g))
 
 (defmacro dotrace
   "Given a sequence of function identifiers, evaluate the body
@@ -298,7 +345,7 @@ such as clojure.core/+"
   ThrowableRecompose
   (ctor-select [this _ _] this)) ;; Obviously something is wrong but the trace should not alter processing
 
-(defn  trace-compose-throwable
+(defn trace-compose-throwable
   "Re-create a new throwable with a composed message from the given throwable
    and the message to be added. The exception stack trace is kept at a minimum."
   [^Throwable throwable ^String message]
@@ -308,7 +355,7 @@ such as clojure.core/+"
         new-throwable (clone-throwable throwable new-stack-trace [composed-msg])]
     new-throwable))
 
-(defn  trace-form
+(defn trace-form
   "Trace the given form avoiding try catch when recur is present in the form."
   [form]
   (if (recurs? form)
@@ -324,7 +371,7 @@ such as clojure.core/+"
   `(do
      ~@(map trace-form body)))
 
-(defn  trace-var*
+(defn trace-var*
   "If the specified Var holds an IFn and is not marked as a macro, its
   contents is replaced with a version wrapped in a tracing call;
   otherwise nothing happens. Can be undone with untrace-var.
@@ -339,14 +386,19 @@ such as clojure.core/+"
            ns (.ns v)
            s  (.sym v)]
        (if (and (ifn? @v) (-> v meta :macro not) (-> v meta ::traced not))
-         (let [f @v
-               vname (symbol (str ns "/" s))]
+         (let [f @v]
+           ;; (println "s:" (pr-str s))
+           ;; (println (find-source s))
            (doto v
              (alter-var-root #(fn tracing-wrapper [& args]
                                 (trace-fn-call s % args)))
-             (alter-meta! assoc ::traced f)))))))
+             (alter-meta! assoc ::traced f))
+           (if-let [source (try (find-source s)
+                                (catch Throwable _ nil))]
+             (alter-meta! v assoc ::fn-body source)
+             v))))))
 
-(defn  untrace-var*
+(defn untrace-var*
   "Reverses the effect of trace-var / trace-vars / trace-ns for the
   given Var, replacing the traced function with the original, untraced
   version. No-op for non-traced Vars.
