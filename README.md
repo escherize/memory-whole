@@ -54,7 +54,7 @@ But now we can query for runtime information about `boo`:
  :name "boo",
  :file "*snip*/memory-whole/README.md",
  :start_time 1630460847233,
- :source "(defn boo [a b]\n  (* a b))",
+ :source "(defn boo [a b]\n  (* a b))", ;;n.b. source is flaky PRs welcome
  :output 200,
  :column 1,
  :end_time 1630460847243,
