@@ -1,7 +1,7 @@
 (ns memory-whole.memory
   (:require [clojure.java.jdbc :as jdbc]
-            [clojure.string :as str])
-  (:import (clojure.lang RT)))
+            [clojure.string :as str]
+            [clojure.edn :as edn]))
 
 (def *db-uri (atom {:connection-uri "jdbc:sqlite:.memory-whole.db"}))
 
@@ -56,13 +56,27 @@
    (mapv (fn [k] (keyword (str/replace (name k) #"_" "-"))) (keys m))
    (vals m)))
 
+(defonce *readers-map (atom {'delay identity}))
+
+(defn try-read [s]
+  (try (edn/read-string {:readers @*readers-map} s)
+       (catch Throwable _ s)))
+
+(defn epoch->human-time [epoch]
+  (str (java.util.Date. epoch)))
+
 ;; Reading back the history:
-(defn format-on-read [row] (let [r (fnil read-string "nil")]
-                             (-> row
-                                 kebab-case-keys
-                                 (update-maybe :arguments r)
-                                 (update-maybe :arg-lists r)
-                                 (update-maybe :output r))))
+(defn format-on-read [row]
+  (-> row
+      kebab-case-keys
+      (update-maybe :arguments try-read)
+      (update-maybe :arg-lists try-read)
+      (update-maybe :output try-read)
+      (assoc :human-start (try (epoch->human-time (:start_time row))
+                               (catch Throwable _ "cant parse")))
+      (assoc :human-end (try (epoch->human-time (:end_time row))
+                             (catch Throwable _ "cant parse")))))
+
 
 (defn read-fn-name [fn-name]
   (cond
@@ -98,3 +112,12 @@
       (nil? result) nil
       (coll? result) (mapv format-on-read result)
       :else (format-on-read result))))
+
+(defn last-called [name]
+  (-> (select ["select start_time from calls where name = ? order by start_time limit 1" name])
+      first
+      :start-time
+      epoch->human-time))
+
+(defn ls []
+  (sort (mapv :name (select ["select distinct name from calls order by start_time"]))))
